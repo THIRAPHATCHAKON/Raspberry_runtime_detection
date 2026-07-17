@@ -1,14 +1,22 @@
 import re
-import sys
 import cv2
 import numpy as np
-from pathlib import Path
-from paddleocr import TextRecognition
 from rapidfuzz import process, fuzz
+from rapidocr_onnxruntime import RapidOCR
+from huggingface_hub import hf_hub_download
+import time
 
-ocr = TextRecognition(
-    model_name="th_PP-OCRv5_mobile_rec"
+det_path = hf_hub_download("monkt/paddleocr-onnx", "detection/v5/det.onnx")
+rec_path = hf_hub_download("monkt/paddleocr-onnx", "languages/thai/rec.onnx")
+dict_path = hf_hub_download("monkt/paddleocr-onnx", "languages/thai/dict.txt")
+
+ocr = RapidOCR(
+    det_model_path=det_path,
+    rec_model_path=rec_path,
+    rec_keys_path=dict_path
 )
+_dummy = np.zeros((48, 320, 3), dtype=np.uint8)
+ocr(_dummy)  # warm-up
 
 PATTERNS = [
     {
@@ -143,7 +151,6 @@ def split(img): # แบ่งรูปภาพ
     split_proportion = int(h * 0.65)
     top = img[:split_proportion+5, :]
     bottom = img[split_proportion-5:, :]
-    cv2.imwrite("g.jpg",top)
     return top , bottom
 
 
@@ -267,24 +274,29 @@ def perspective_plate(plate): # หมุนภาพ
 
     return warp
 
-def read_plate(folder_image): # ฟังก์ชันหลัก
-    
-    # folder_image = cv2.imread("img_6.png") #อ่านภาพ
-    folder_image = perspective_plate(folder_image)
-    folder_image = crop_border(
-        folder_image,
-        margin=0.07
-    )
-    folder_image = cv2.resize(folder_image, (320,48)) # ปรับภาพให้ขนาดเท่ากับ โมเดล Ocr
-    top , bottom = split(folder_image)
-    license_id = ocr.predict(top)[0]["rec_text"] # ดึงข้อมูลการทำนาย
-    license_id = re.sub(r"[\s\-]", "", license_id)
+def read_plate(folder_image):
 
-    province = ocr.predict(bottom)[0]["rec_text"] # ดึงข้อมูลการทำนาย
-    province = fuzz_login(province)
-    print(license_id)
-    print(province)
-    
-    return license_id , province
+    folder_image = perspective_plate(folder_image)
+    folder_image = crop_border(folder_image, margin=0.07)
+    folder_image = cv2.resize(folder_image, (320, 48))
+    top, bottom = split(folder_image)
+
+    t0 = time.time()
+    top_result, _ = ocr(top, use_det=False, use_cls=False)
+    t1 = time.time()
+    bottom_result, _ = ocr(bottom, use_det=False, use_cls=False)
+    t2 = time.time()
+
+    print(f"OCR top: {(t1 - t0)*1000:.1f} ms")
+    print(f"OCR bottom: {(t2 - t1)*1000:.1f} ms")
+    print(f"OCR total: {(t2 - t0)*1000:.1f} ms")
+
+    license_id = top_result[0][0] if top_result else ""
+    province_raw = bottom_result[0][0] if bottom_result else ""
+
+    license_id = re.sub(r"[\s\-]", "", license_id)
+    province = fuzz_login(province_raw)
+
+    return license_id, province
     
 
