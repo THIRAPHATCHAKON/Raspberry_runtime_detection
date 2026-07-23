@@ -1,69 +1,36 @@
 import re
 import cv2
 import numpy as np
+from pathlib import Path
+from paddleocr import TextRecognition
 from rapidfuzz import process, fuzz
-from rapidocr_onnxruntime import RapidOCR
-from huggingface_hub import hf_hub_download
-import time
 
-det_path = hf_hub_download("monkt/paddleocr-onnx", "detection/v5/det.onnx")
-rec_path = hf_hub_download("monkt/paddleocr-onnx", "languages/thai/rec.onnx")
-dict_path = hf_hub_download("monkt/paddleocr-onnx", "languages/thai/dict.txt")
-
-ocr = RapidOCR(
-    det_model_path=det_path,
-    rec_model_path=rec_path,
-    rec_keys_path=dict_path
+ocr = TextRecognition(
+    model_name="th_PP-OCRv5_mobile_rec"   # ตรงกับจุดที่เริ่ม fine-tune จริง
 )
-_dummy = np.zeros((48, 320, 3), dtype=np.uint8)
-ocr(_dummy)  # warm-up
-
-PATTERNS = [
-    {
-        "name": "number_thai2_number4",
-        "length": 7,
-        "thai_index": [1,2],
-        "number_index": [0,3,4,5,6]
-    },
-
-    {
-        "name": "thai2_number4",
-        "length": 6,
-        "thai_index": [0,1],
-        "number_index": [2,3,4,5]
-    },
-
-    {
-        "name": "thai1_number4",
-        "length": 5,
-        "thai_index": [0],
-        "number_index": [1,2,3,4]
-    }
-]
-
-NUMBER_MAP = {
-    "O": "0",
-    "o": "0",
-    "Q": "0",
-
-    "I": "1",
-    "l": "1",
-    "|": "1",
-
-    "Z": "2",
-
-    "S": "5",
-
-    "B": "8"
-}
 
 THAI_MAP = {
-    "8": "ช",
-    "6": "บ",
-    "@": "อ"
+    "@": "ฮ",
+    "&": "ฃ",
+    "N": "ก",
+    "n": "ก",
+    "1": "ก",
+    "0": "ค",
+    "H": "ฬ",
+    "W": "พ",
+    "U": "ข",
+    "A": "ฎ"
 }
 
-THAI_PROVINCES = [ # ชุดข้อมูลจังหวัด
+# Patterns
+# PLATE_PATTERN = re.compile(r'^[0-9]?[ก-ฮ]{1,3}\s?[0-9]{1,4}$')
+
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+# โฟลเดอร์เก็บภาพ debug (ภาพที่ผ่านการแปลงเป็นขาวดำ)
+DEBUG_DIR = Path("debug_output")
+
+THAI_PROVINCES = [
     "กรุงเทพมหานคร", "กระบี่", "กาญจนบุรี", "กาฬสินธุ์", "กำแพงเพชร",
     "ขอนแก่น", "จันทบุรี", "ฉะเชิงเทรา", "ชลบุรี", "ชัยนาท",
     "ชัยภูมิ", "ชุมพร", "เชียงราย", "เชียงใหม่", "ตรัง",
@@ -79,82 +46,43 @@ THAI_PROVINCES = [ # ชุดข้อมูลจังหวัด
     "สมุทรสงคราม", "สมุทรสาคร", "สระแก้ว", "สระบุรี", "สิงห์บุรี",
     "สุโขทัย", "สุพรรณบุรี", "สุราษฎร์ธานี", "สุรินทร์", "หนองคาย",
     "หนองบัวลำภู", "อ่างทอง", "อำนาจเจริญ", "อุดรธานี", "อุตรดิตถ์",
-    "อุทัยธานี", "อุบลราชธานี", "เบตง",
+    "อุทัยธานี", "อุบลราชธานี","เบตง",
 ]
 
-def crop_border(image, margin=0.06): # ตัดขอบภาพทะเบียน
+def read_plate(image_source, split_ratio, #ทำงาน 2
+               province_threshold,
+               conf_threshold,) -> dict:
 
-    h, w = image.shape[:2]
-
-    # จำนวน pixel ที่ตัด
-    mx = int(w * margin)
-    my = int(h * margin)
-
-
-    cropped = image[
-        my:h-my,
-        mx:w-mx
-    ]
-
-    return cropped
-
-def character_constraint(license_id): # กฎป้ายทะเบียน
-
-    chars = list(license_id)
-
-    length = len(chars)
-
-
-    for pattern in PATTERNS:
-
-        if length == pattern["length"]:
-
-            for i in pattern["thai_index"]:
-
-                if chars[i] in THAI_MAP:
-                    chars[i] = THAI_MAP[chars[i]]
-
-
-            for i in pattern["number_index"]:
-
-                if chars[i] in NUMBER_MAP:
-                    chars[i] = NUMBER_MAP[chars[i]]
-
-
-            return "".join(chars)
-
-
-    return license_id
-
-def fuzz_login(province): # ทำนายจังหวัด
-    province = re.sub(r"[^\u0E00-\u0E7F]", "", province)
-    province = province.strip()
-    
-    match = process.extractOne(
-            province,
-            THAI_PROVINCES,
-            scorer=fuzz.ratio
+    if isinstance(image_source, (str, Path)):
+        img = cv2.imread(str(image_source))
+        if img is None:
+            raise FileNotFoundError(f"ไม่พบไฟล์: {image_source}")
+    elif isinstance(image_source, np.ndarray):
+        img = image_source
+    else:
+        raise TypeError(
+            f"image_source ต้องเป็น str/Path (path ไฟล์) หรือ np.ndarray (ภาพที่โหลดแล้ว) "
+            f"แต่ได้รับ {type(image_source)}"
         )
+    stem = Path(image_source).stem if isinstance(image_source, (str, Path)) else "crop"
+    img = perspective_plate(img)
+    img = crop_border(
+        img,
+        margin=0.04
+    )
+    top_img, bottom_img = split_plate_image(img, split_ratio)
 
-    if match is None:
-        return province
+    # OCR พร้อม confidence threshold ตามงานวิจัยโรมาเนีย
+    top_results      = ocr_image(top_img, conf_threshold)
+    plate_number_raw = " ".join(r[0] for r in top_results)
+    license_id = clean_plate_number(plate_number_raw)
+    bottom_results       = ocr_image(bottom_img, conf_threshold)
+    province_raw         = " ".join(r[0] for r in bottom_results)
+    province, prov_score = match_province(province_raw, threshold=province_threshold)
 
-    province, score, _ = match
+    return license_id ,province
 
-    if score >= 90:
-        return province
-    
-    return province
-    
-def split(img): # แบ่งรูปภาพ
-    h,w = img.shape[:2]
-    split_proportion = int(h * 0.65)
-    top = img[:split_proportion+5, :]
-    bottom = img[split_proportion-5:, :]
-    return top , bottom
-
-
-def order_points(pts):
+def order_points(pts): #ทำงาน 3
     """
     เรียงมุมเป็น
     TL, TR, BR, BL
@@ -173,7 +101,6 @@ def order_points(pts):
     rect[3] = pts[np.argmax(diff)]    # Bottom Left
 
     return rect
-
 
 def perspective_plate(plate): # หมุนภาพ
 
@@ -220,7 +147,7 @@ def perspective_plate(plate): # หมุนภาพ
 
     # หา Min Area Rectangle
     rect = cv2.minAreaRect(contour)
-
+    
     # 4 มุม
     box = cv2.boxPoints(rect)
 
@@ -230,24 +157,16 @@ def perspective_plate(plate): # หมุนภาพ
     box = order_points(box)
 
     # คำนวณความกว้าง
-    widthA = np.linalg.norm(
-        box[2] - box[3]
-    )
+    widthA = np.linalg.norm(box[2] - box[3])
 
-    widthB = np.linalg.norm(
-        box[1] - box[0]
-    )
+    widthB = np.linalg.norm(box[1] - box[0])
 
     maxWidth = int(max(widthA, widthB))
 
     # คำนวณความสูง
-    heightA = np.linalg.norm(
-        box[1] - box[2]
-    )
+    heightA = np.linalg.norm( box[1] - box[2] )
 
-    heightB = np.linalg.norm(
-        box[0] - box[3]
-    )
+    heightB = np.linalg.norm( box[0] - box[3] )
 
     maxHeight = int(max(heightA, heightB))
 
@@ -274,29 +193,87 @@ def perspective_plate(plate): # หมุนภาพ
 
     return warp
 
-def read_plate(folder_image):
+def crop_border(image, margin): # ตัดขอบภาพทะเบียน ทำงาน 4
 
-    folder_image = perspective_plate(folder_image)
-    folder_image = crop_border(folder_image, margin=0.07)
-    folder_image = cv2.resize(folder_image, (320, 48))
-    top, bottom = split(folder_image)
+    h, w = image.shape[:2]
 
-    t0 = time.time()
-    top_result, _ = ocr(top, use_det=False, use_cls=False)
-    t1 = time.time()
-    bottom_result, _ = ocr(bottom, use_det=False, use_cls=False)
-    t2 = time.time()
+    # จำนวน pixel ที่ตัด
+    mx = int(w * margin)
+    my = int(h * margin)
 
-    print(f"OCR top: {(t1 - t0)*1000:.1f} ms")
-    print(f"OCR bottom: {(t2 - t1)*1000:.1f} ms")
-    print(f"OCR total: {(t2 - t0)*1000:.1f} ms")
+    cropped = image[
+        my:h-my,
+        mx:w-mx
+    ]
 
-    license_id = top_result[0][0] if top_result else ""
-    province_raw = bottom_result[0][0] if bottom_result else ""
+    return cropped
 
-    license_id = re.sub(r"[\s\-]", "", license_id)
-    province = fuzz_login(province_raw)
+def split_plate_image(image: np.ndarray, split_ratio: float): # ทำงาน 5
+    h, w = image.shape[:2]
+    cut = int(h * split_ratio)
+    return image[:cut, :], image[cut:, :]
 
-    return license_id, province
-    
+# Helpers
+def parse_ocr_result(res): #ทำงาน 6.5
+    """รองรับทั้ง dict และ object แบบ PaddleOCR v3"""
+    if isinstance(res, dict):
+        data = res.get("res", res)
+        return data.get("rec_text", ""), data.get("rec_score", 0.0)
+    if hasattr(res, "rec_text"):
+        return res.rec_text, getattr(res, "rec_score", 0.0)
+    if hasattr(res, "__dict__"):
+        d = vars(res)
+        return d.get("rec_text", ""), d.get("rec_score", 0.0)
+    return str(res), 0.0
+
+def ocr_image(image: np.ndarray, conf_threshold: float = 0.6): #ทำงาน 6
+    """อ่าน OCR และกรองผลลัพธ์ที่ confidence ต่ำกว่า threshold ออก (ตามงานวิจัยโรมาเนีย)"""
+    output = []
+    for res in ocr.predict(image):
+        text, score = parse_ocr_result(res)
+        if score >= conf_threshold:
+            output.append((text, score))
+    return output
+
+def clean_plate_number(text: str):
+    text = text.replace(" ", "")
+    length = len(text)
+
+    if length == 6:
+        text = "" + repair_thai(text[0:2]) + text[2:6]
+
+    elif length == 7:
+        text = text[0] + repair_thai(text[1:3]) + text[3:7]
+
+    return text
+
+def repair_thai(text):
+
+    for old, new in THAI_MAP.items():
+        text = text.replace(old, new)
+
+    return text
+
+def clean_province_text(text: str) -> str: #ทำงาน 8
+    text = text.strip()
+    for old, new in THAI_MAP.items():
+        text = text.replace(old, new)
+    text = re.sub(r'[^ก-๙]', '', text)
+    return text
+
+def match_province(text: str, threshold: int): #ทำงาน 9
+    if not text:
+        return None, 0
+    result = process.extractOne(
+        text,
+        THAI_PROVINCES,
+        scorer=fuzz.token_set_ratio,
+    )
+    if result is None:
+        return None, 0
+    match, score, _ = result
+    if score >= threshold:
+        return match, score
+    return None, score
+
 

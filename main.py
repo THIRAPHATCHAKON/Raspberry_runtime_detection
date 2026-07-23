@@ -2,8 +2,8 @@ import cv2
 from detect import detect
 from ocr import read_plate
 import time
-t_start = time.time()
-image = cv2.imread("r.jpg")  # อ่านภาพ
+# t_start = time.time()
+image = cv2.imread("t.jpg")  # อ่านภาพ
 cars, plates = detect(image)  # ส่งภาพไป detection
 # cars, plates เป็น list ของ dict: {"image": crop, "bbox": (x1,y1,x2,y2), "conf": score}
 
@@ -27,8 +27,10 @@ for i, plate in enumerate(plates):
 
     cv2.imwrite(f"plate_{i}.jpg", plate_crop)
 
-    license_id, province = read_plate(plate_crop)
+    license_id, province = read_plate(plate_crop, split_ratio= 0.60,
+                province_threshold= 70,
+                conf_threshold= 0.6,)
     print(f"Plate {i} -> {license_id}, {province}")
 
-t3 = time.time()
-print(f"[main.py] เวลารวมทั้งโปรแกรม (ไม่รวมการรอ imshow): {(t3 - t_start) * 1000:.2f} ms")
+# t3 = time.time()
+# print(f"[main.py] เวลารวมทั้งโปรแกรม (ไม่รวมการรอ imshow): {(t3 - t_start) * 1000:.2f} ms")
