@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 from paddleocr import TextRecognition
 from rapidfuzz import process, fuzz
+from collections import Counter
 
 ocr = TextRecognition(
     model_name="th_PP-OCRv5_mobile_rec"   # ตรงกับจุดที่เริ่ม fine-tune จริง
@@ -49,10 +50,38 @@ THAI_PROVINCES = [
     "อุทัยธานี", "อุบลราชธานี","เบตง",
 ]
 
+def read_plate_sequence(images,
+                        split_ratio,
+                        province_threshold,
+                        conf_threshold):
+
+    license_results = []
+    province_results = []
+
+    for img in images:
+
+        license_id, province = read_plate(
+            img,
+            split_ratio,
+            province_threshold,
+            conf_threshold
+        )
+
+        if license_id:
+            license_results.append(license_id)
+
+        if province:
+            province_results.append(province)
+
+    final_license = character_vote(license_results)
+    final_province = province_vote(province_results)
+
+    return final_license, final_province
+
 def read_plate(image_source, split_ratio, #ทำงาน 2
                province_threshold,
                conf_threshold,) -> dict:
-
+    
     if isinstance(image_source, (str, Path)):
         img = cv2.imread(str(image_source))
         if img is None:
@@ -275,5 +304,39 @@ def match_province(text: str, threshold: int): #ทำงาน 9
     if score >= threshold:
         return match, score
     return None, score
+
+def character_vote(texts):
+
+    texts = [t for t in texts if t]
+
+    if not texts:
+        return ""
+
+    max_len = max(len(t) for t in texts)
+
+    result = ""
+
+    for i in range(max_len):
+
+        chars = []
+
+        for t in texts:
+
+            if i < len(t):
+                chars.append(t[i])
+
+        if chars:
+            result += Counter(chars).most_common(1)[0][0]
+
+    return result
+
+def province_vote(provinces):
+
+    provinces = [p for p in provinces if p]
+
+    if not provinces:
+        return None
+
+    return Counter(provinces).most_common(1)[0][0]
 
 
