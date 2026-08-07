@@ -46,7 +46,7 @@ from ocr import read_plate_sequence
 # (ใน ocr.py) ทำงานร่วมกันถูกต้องไหม ก่อนเอาไปต่อกับวิดีโอ/กล้องจริง
 # =====================================================================
 
-IMAGE_PATH = "t.jpg"
+IMAGE_PATH = "tr.png"
 SIMULATED_FRAMES = 10  # จำลองว่ามี 10 เฟรมจากวิดีโอ
 
 image = cv2.imread(IMAGE_PATH)
