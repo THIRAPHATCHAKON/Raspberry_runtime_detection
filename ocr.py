@@ -78,22 +78,14 @@ THAI_PROVINCES = [
 ]
 
 
-def read_plate_sequence(images,
-                         split_ratio,
-                         province_threshold,
-                         conf_threshold):
+def read_plate_sequence(images,split_ratio,province_threshold,conf_threshold):
 
     license_results = []
     province_results = []
 
     for img in images:
 
-        license_id, province = read_plate(
-            img,
-            split_ratio,
-            province_threshold,
-            conf_threshold
-        )
+        license_id, province = read_plate(img,split_ratio,province_threshold,conf_threshold)
 
         if license_id:
             license_results.append(license_id)
