@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 
 MODEL = (Path("model")/ "round_3"/ "best.onnx") # Path Models ถ้าจะเปลี่ยนโมเดล 640 ให้ใช้ model/Final_Detect_640
-
 model = YOLO(str(MODEL),task="detect")
 
 
